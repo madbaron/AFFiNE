@@ -1,3 +1,5 @@
+import { Readable } from 'node:stream';
+
 import { AiJobStatus } from '@prisma/client';
 import test from 'ava';
 import Sinon from 'sinon';
@@ -654,6 +656,104 @@ test('transcriptTask transcribes each audio slice and merges absolute timestamps
     completeDispatch.firstCall.args[3].protectedResult.infos,
     payload.infos
   );
+});
+
+test('transcriptTask inlines audio when storage cannot presign urls', async t => {
+  const blobUrl =
+    'https://affine.fail/api/copilot/blob/user-1/workspace-1/blob-1-0';
+  const payload = TranscriptPayloadSchema.parse({
+    sourceAudio: { blobId: 'blob-1', mimeType: 'audio/opus' },
+    infos: [
+      { key: 'blob-1-0', url: blobUrl, mimeType: 'audio/opus', index: 0 },
+    ],
+  });
+  const audio = Buffer.from('fake opus audio');
+  const bridgeInputs: unknown[] = [];
+  const attachments: unknown[] = [];
+  const generateStructuredValue = Sinon.stub().callsFake(
+    async (
+      _conditions: unknown,
+      messages: { attachments?: unknown[] }[],
+      options: { builtInRouteId?: string }
+    ) => {
+      if (options.builtInRouteId === 'Summarize the meeting structured') {
+        return {
+          value: {
+            title: 'Sync',
+            durationMinutes: 1,
+            attendees: [],
+            keyPoints: [],
+            actionItems: [],
+            decisions: [],
+            openQuestions: [],
+            blockers: [],
+          },
+        };
+      }
+      attachments.push(...(messages.at(-1)?.attachments ?? []));
+      return { value: [{ a: 'A', s: 0, e: 2, t: 'Hello' }] };
+    }
+  );
+  const storageGet = Sinon.stub().resolves({
+    body: Readable.from([audio]),
+    metadata: { contentType: 'audio/ogg' },
+  });
+  const completeDispatch = Sinon.stub().resolves(true);
+  const service = createCopilotTranscriptionService(
+    {
+      copilotTranscriptTask: {
+        get: Sinon.stub().resolves({
+          id: 'task-1',
+          userId: 'user-1',
+          workspaceId: 'workspace-1',
+          blobId: 'blob-1',
+          status: 'pending',
+          actionRunId: null,
+        }),
+        claimDispatch: Sinon.stub().resolves(true),
+        attachActionRun: Sinon.stub().resolves(true),
+        completeDispatch,
+      },
+    } as never,
+    {} as never,
+    {
+      presignGet: Sinon.stub().resolves(undefined),
+      get: storageGet,
+    } as never,
+    {} as never,
+    createTranscriptPromptService() as never,
+    createSuccessfulTranscriptBridge('run-bridge', bridgeInputs) as never,
+    { generateStructuredValue } as never
+  );
+
+  await service.transcriptTask({
+    taskId: 'task-1',
+    payload,
+    generation: 'generation-1',
+  });
+
+  Sinon.assert.calledOnceWithExactly(
+    storageGet,
+    'user-1',
+    'workspace-1',
+    'blob-1-0'
+  );
+  t.deepEqual(attachments, [
+    {
+      attachment: `data:audio/ogg;base64,${audio.toString('base64')}`,
+      mimeType: 'audio/opus',
+    },
+  ]);
+  // the persisted snapshot keeps the storage url instead of the audio bytes
+  t.deepEqual(
+    (bridgeInputs[0] as { inputSnapshot: { infos: unknown[] } }).inputSnapshot
+      .infos,
+    [{ url: blobUrl, mimeType: 'audio/opus', index: 0 }]
+  );
+  t.like(completeDispatch.firstCall.args[3], {
+    status: 'ready',
+    errorCode: null,
+  });
 });
 
 test('transcriptTask fails task when native action bridge reports an error event', async t => {

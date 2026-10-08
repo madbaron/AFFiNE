@@ -141,10 +141,54 @@ export class CopilotTranscriptionService {
     }
 
     const signedUrl = await this.storage.presignGet(userId, workspaceId, key);
-    if (!signedUrl) {
-      throw new Error('Transcript attachment signing is not configured');
+    if (signedUrl) {
+      return signedUrl;
     }
-    return signedUrl;
+    // Storage without presigned GET support (e.g. the `fs` provider used by
+    // most self-hosted deployments) cannot hand the model a URL, so pass the
+    // audio slice inline instead.
+    return await this.inlineAttachment(userId, workspaceId, key, info.mimeType);
+  }
+
+  private async inlineAttachment(
+    userId: string,
+    workspaceId: string,
+    key: string,
+    mimeType: string
+  ) {
+    const { body, metadata } = await this.storage.get(
+      userId,
+      workspaceId,
+      key
+    );
+    if (!body) {
+      throw new Error('Transcript attachment cannot be read');
+    }
+    const buffer = await readStream(body);
+    const contentType = metadata?.contentType || mimeType;
+    return `data:${contentType};base64,${buffer.toString('base64')}`;
+  }
+
+  /**
+   * Inlined attachments only live in the payload used to run the action; the
+   * persisted input snapshot keeps the original storage URL so audio bytes are
+   * not stored a second time in the database.
+   */
+  private snapshotPayload(
+    payload: TranscriptionPayloadV2,
+    runtimePayload: TranscriptionPayloadV2
+  ): TranscriptionPayloadV2 {
+    return {
+      ...runtimePayload,
+      infos: runtimePayload.infos?.map((info, index) => {
+        const original = payload.infos?.[index];
+        return original &&
+          info.url.startsWith('data:') &&
+          !original.url.startsWith('data:')
+          ? { ...info, url: original.url }
+          : info;
+      }),
+    };
   }
 
   private async materializePayload(
@@ -556,7 +600,7 @@ export class CopilotTranscriptionService {
           actionId: TRANSCRIPT_ACTION_ID,
           actionVersion: TRANSCRIPT_ACTION_VERSION,
           retryOf: retryOf ?? null,
-          inputSnapshot: runtimePayload,
+          inputSnapshot: this.snapshotPayload(payload, runtimePayload),
           onRunCreated: async ({ runId }) => {
             const attached =
               await this.models.copilotTranscriptTask.attachActionRun(
