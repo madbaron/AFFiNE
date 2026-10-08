@@ -156,17 +156,14 @@ export class CopilotTranscriptionService {
     key: string,
     mimeType: string
   ) {
-    const { body, metadata } = await this.storage.get(
-      userId,
-      workspaceId,
-      key
-    );
+    const { body } = await this.storage.get(userId, workspaceId, key);
     if (!body) {
       throw new Error('Transcript attachment cannot be read');
     }
     const buffer = await readStream(body);
-    const contentType = metadata?.contentType || mimeType;
-    return `data:${contentType};base64,${buffer.toString('base64')}`;
+    // Use the mime type sniffed at upload: the stored object metadata does not
+    // carry it (uploads are stored with the storage default content type).
+    return `data:${mimeType};base64,${buffer.toString('base64')}`;
   }
 
   /**

@@ -696,7 +696,8 @@ test('transcriptTask inlines audio when storage cannot presign urls', async t =>
   );
   const storageGet = Sinon.stub().resolves({
     body: Readable.from([audio]),
-    metadata: { contentType: 'audio/ogg' },
+    // storage metadata does not know the audio type
+    metadata: { contentType: 'image/png' },
   });
   const completeDispatch = Sinon.stub().resolves(true);
   const service = createCopilotTranscriptionService(
@@ -740,7 +741,7 @@ test('transcriptTask inlines audio when storage cannot presign urls', async t =>
   );
   t.deepEqual(attachments, [
     {
-      attachment: `data:audio/ogg;base64,${audio.toString('base64')}`,
+      attachment: `data:audio/opus;base64,${audio.toString('base64')}`,
       mimeType: 'audio/opus',
     },
   ]);
