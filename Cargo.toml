@@ -8,6 +8,8 @@ members = [
   "./packages/frontend/native/schema",
   "./packages/frontend/native/sqlite_v1",
 ]
+# Vendored dependency patched via [patch.crates-io], not a workspace member.
+exclude = ["./vendor/llm_adapter"]
 resolver = "3"
 
   [workspace.package]
@@ -132,6 +134,8 @@ strip         = "symbols"
   [profile.release.package.affine_mobile_native]
   strip = "none"
 
-  # [patch.crates-io]
-  # llm_adapter = { path = "../llm_adapter/crates/llm_adapter" }
+  # llm_adapter 0.2.20 with audio formats beyond wav/mp3/ogg/flac accepted for
+  # OpenAI chat completions (transcript slices are m4a); see vendor/llm_adapter.
+  [patch.crates-io]
+  llm_adapter = { path = "./vendor/llm_adapter" }
   # llm_runtime = { path = "../llm_adapter/crates/llm_runtime" }
